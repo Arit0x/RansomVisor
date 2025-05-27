@@ -14,6 +14,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 from prophet import Prophet
 import traceback  # Importación explícita de traceback para gestión de errores
+import os
+import sys
+import json
+import time
+import datetime
+from pathlib import Path
+
+# Asegurar que podemos importar módulos desde el directorio principal
+root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if root_path not in sys.path:
+    sys.path.append(root_path)
 
 # Importar el módulo de integración
 from modeling import integration
@@ -222,6 +233,10 @@ def modelado_modular_app():
                 'correlation_threshold': 0.12,
                 'vif_threshold': 5.0
             }
+        
+        # Cargar optimizaciones guardadas
+        if 'optimizations' not in st.session_state:
+            st.session_state.optimizations = {}
         
         # Visualización del flujo de trabajo (más clara y compacta)
         st.markdown('<div class="section-header"><h2>Estado del Proceso</h2></div>', unsafe_allow_html=True)
@@ -700,6 +715,18 @@ def modelado_modular_app():
                 st.error(" Primero debe cargar los datos")
             else:
                 try:
+                    # Reiniciar SOLO el modelo Prophet si ya existe, 
+                    # pero mantener todos los demás componentes necesarios para predicción y evaluación
+                    if 'prophet_model' in st.session_state:
+                        st.info("Reiniciando modelo anterior para un nuevo entrenamiento...")
+                        del st.session_state.prophet_model
+                    
+                    # Marcar como no entrenado para forzar nuevo entrenamiento
+                    if 'model_trained' in st.session_state:
+                        st.session_state.model_trained = False
+                    
+                    # Mantener intactos: forecaster, df, datos de evaluación y otros componentes necesarios
+                    
                     with st.spinner("Entrenando modelo..."):
                         # Forzar parámetros específicos para el modelo con todas las optimizaciones activadas
                         st.session_state.params['use_log_transform'] = True

@@ -619,6 +619,15 @@ def prepare_data_wrapper(
                                 # Guardar el estado de las optimizaciones en la sesión
                                 st.session_state.optimizations_applied = optimizations_applied
 
+                                # Crear directorio para optimizaciones si no existe
+                                os.makedirs('data/optimizations', exist_ok=True)
+
+                                # Guardar optimizaciones en un archivo JSON
+                                optimizations_file = "data/optimizations/latest_optimizations.json"
+                                with open(optimizations_file, "w") as f:
+                                    json.dump(optimizations_applied, f)
+                                st.success(f"✅ Optimizaciones guardadas en archivo para persistencia")
+
                                 # Mostrar información sobre las optimizaciones aplicadas de forma más clara
                                 st.info("✅ Optimizaciones Aplicadas:")
                                 st.info(f"- log_transform: {optimizations_applied['log_transform']}")
@@ -833,9 +842,33 @@ def make_forecast_wrapper(_self=None, periods=30, include_history=True):
             if 'optimizations_applied' in st.session_state:
                 # Usar las optimizaciones guardadas durante el entrenamiento
                 optimizations_applied = st.session_state.optimizations_applied
-                st.info(f"Usando optimizaciones aplicadas durante el entrenamiento: {optimizations_applied}")
+                st.info(f"Usando optimizaciones aplicadas durante el entrenamiento")
             else:
-                # Si no hay información guardada, crear un diccionario por defecto
+                # Intentar cargar optimizaciones desde archivo
+                import json
+                import os
+            
+            optimizations_file = "data/optimizations/latest_optimizations.json"
+            if os.path.exists(optimizations_file):
+                try:
+                    with open(optimizations_file, "r") as f:
+                        optimizations_applied = json.load(f)
+                    st.session_state.optimizations_applied = optimizations_applied
+                    st.success("✅ Optimizaciones cargadas desde archivo guardado")
+                except Exception as e:
+                    st.error(f"Error al cargar optimizaciones desde archivo: {str(e)}")
+                    # Si hay error, usar valores por defecto
+                    optimizations_applied = {
+                        'log_transform': use_log_transform,
+                        'optimal_regressors': st.session_state.get('use_optimal_regressors', False),
+                        'bayesian_optimization': st.session_state.get('use_bayesian_optimization', False),
+                        'interval_calibration': st.session_state.get('use_interval_calibration', False),
+                        'selected_regressors': [],
+                        'optimized_params': {}
+                    }
+                    st.warning("⚠️ No se pudieron cargar las optimizaciones guardadas. Usando valores por defecto.")
+            else:
+                # Si no hay archivo, usar valores por defecto
                 optimizations_applied = {
                     'log_transform': use_log_transform,
                     'optimal_regressors': st.session_state.get('use_optimal_regressors', False),
@@ -1739,8 +1772,15 @@ def train_model_wrapper(
     # Entrenar modelo
     try:
         with st.spinner("Entrenando modelo Prophet..."):
-            # Inicializar modelo
+            # Limpiar todas las referencias al modelo Prophet para evitar el error
+            _clean_prophet_model_references()
+                
+            # Crear instancia del modelo
             model = RansomwareProphetModel()
+            
+            # Establecer parámetros
+            for param, value in model_config.items():
+                setattr(model, param, value)
             
             # Si se solicita optimización bayesiana, ejecutarla antes de entrenar
             if use_bayesian_optimization:
@@ -2980,7 +3020,7 @@ def _train_prophet_model(df, model_config, regressors, use_optimal_regressors=Tr
         if regressors is not None and use_optimal_regressors:
             try:
                 # Preparar regresores basados en datos CVE
-                if hasattr(st.session_state.forecaster, 'df_cve'):
+                if 'forecaster' in st.session_state and hasattr(st.session_state.forecaster, 'df_cve'):
                     cve_df = st.session_state.forecaster.df_cve
                     if cve_df is not None and len(cve_df) > 0:
                         regressor_df = regressors.prepare_regressors(df, cve_df)
@@ -3011,7 +3051,51 @@ def _train_prophet_model(df, model_config, regressors, use_optimal_regressors=Tr
     except Exception as e:
         st.error(f"Error entrenando modelo: {str(e)}")
         logger.error(f"Error entrenando modelo: {traceback.format_exc()}")
-        return None
+
+# Función helper para limpiar referencias al modelo Prophet
+def _clean_prophet_model_references():
+    """
+    Limpia todas las referencias al modelo Prophet de la sesión para evitar el error
+    'Prophet object can only be fit once' cuando se entrena un nuevo modelo.
+    """
+    # Limpiar modelo en session_state
+    if 'prophet_model' in st.session_state:
+        del st.session_state.prophet_model
+    if 'model' in st.session_state:
+        del st.session_state.model
+    
+    # Limpiar referencias en forecaster si existe
+    if 'forecaster' in st.session_state:
+        forecaster = st.session_state.forecaster
+        
+        # Limpiar model en forecaster
+        if hasattr(forecaster, 'model'):
+            forecaster.model = None
+            
+        # Limpiar prophet_model en forecaster    
+        if hasattr(forecaster, 'prophet_model'):
+            forecaster.prophet_model = None
+            
+        # Limpiar modelo dentro de ransomware_model
+        if hasattr(forecaster, 'ransomware_model') and hasattr(forecaster.ransomware_model, 'model'):
+            forecaster.ransomware_model.model = None
+    
+    # Marcar como no entrenado
+    if 'model_trained' in st.session_state:
+        st.session_state.model_trained = False
+        
+    # Limpiar el caché de recursos de Streamlit
+    # Esto es crítico porque el método create_model() en RansomwareProphetModel
+    # está decorado con @st.cache_resource, lo que hace que el mismo modelo
+    # se reutilice entre sesiones
+    try:
+        st.cache_resource.clear()
+    except:
+        # En versiones anteriores de Streamlit
+        try:
+            st.experimental_singleton.clear()
+        except:
+            pass
 
 def train_model_wrapper(
     df: Optional[pd.DataFrame] = None,
@@ -3298,7 +3382,7 @@ def evaluate_model_wrapper(_self=None, cv_periods=30, initial=None, period=None,
     try:
         # Verificar que el modelo está entrenado
         if 'forecaster' not in st.session_state or st.session_state.forecaster is None:
-            st.error("⚠️ Primero debe entrenar el modelo")
+            st.error("❌ Primero debe entrenar el modelo")
             return None
         
         # Para propósitos de diagnóstico, añadimos logs detallados
@@ -3337,7 +3421,7 @@ def evaluate_model_wrapper(_self=None, cv_periods=30, initial=None, period=None,
         
         # Si no encontramos datos, no podemos continuar
         if df is None or len(df) == 0:
-            st.error("⚠️ No hay datos disponibles para la evaluación")
+            st.error("❌ No hay datos disponibles para la evaluación")
             
             # Diagnóstico detallado
             st.info("Información de diagnóstico:")

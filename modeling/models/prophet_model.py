@@ -24,7 +24,9 @@ class RansomwareProphetModel:
         self.use_log_transform = True
         self.params = {}
         
-    @st.cache_resource
+    # El decorador @st.cache_resource causa el error "Prophet object can only be fit once"
+    # al reutilizar el mismo modelo entre diferentes llamadas
+    # Por lo tanto, lo eliminamos para garantizar que siempre se crea un nuevo modelo
     def create_model(_self,
                   changepoint_prior_scale: float = 0.2,
                   seasonality_prior_scale: float = 10.0,

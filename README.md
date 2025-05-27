@@ -205,6 +205,10 @@ Además, la aplicación incluye una **Guía de Usuario Interactiva** accesible d
 - **Visualización**: Plotly, Matplotlib, Altair
 - **Geoespacial**: Folium, GeoPandas
 
+## 🙏 Agradecimientos
+
+Este proyecto no habría sido posible sin los datos abiertos proporcionados por [Ransomware.live](https://www.ransomware.live). Agradecemos su labor y compromiso con la transparencia, que ha permitido analizar y visualizar el impacto global del ransomware de forma accesible y rigurosa.
+
 ## 🤝 Contribuciones
 
 Las contribuciones son bienvenidas. Para contribuir:
@@ -220,7 +224,7 @@ Las contribuciones son bienvenidas. Para contribuir:
 Para preguntas, sugerencias o colaboraciones, por favor contacta a:
 
 - [Aridañy](mailto:arit0bx@gmail.com)
-- [Perfil GitHub](https://github.com/Arit0x)
+- [arit0x](https://github.com/Arit0x)
 
 ---
 

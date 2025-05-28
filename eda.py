@@ -75,24 +75,78 @@ _CITIES    = _gc.get_cities()
 
 
 # ─── FUNCIONES DE GEOLOCALIZACIÓN ──────────────────────────────────────────────
+# ─── CACHE PARA GEOLOCALIZACIÓN ─────────────────────────────────────────────────
+# Diccionario global para almacenar resultados de geolocalización
+_GEO_CACHE = {}
+import os
+import json
+
+# Ruta al archivo de caché de geolocalizaciones
+GEO_CACHE_FILE = os.path.join('data', 'geo_cache.json')
+
+# Función para cargar caché de geolocalizaciones desde archivo
+@st.cache_data(ttl=24*3600)
+def _load_geo_cache():
+    """Carga el caché de geolocalizaciones desde el archivo"""
+    global _GEO_CACHE
+    try:
+        # Asegurar que el directorio data exista
+        os.makedirs('data', exist_ok=True)
+        
+        # Cargar caché desde archivo si existe
+        if os.path.exists(GEO_CACHE_FILE):
+            with open(GEO_CACHE_FILE, 'r', encoding='utf-8') as f:
+                # Convertir las claves a mayúsculas
+                cached_data = json.load(f)
+                _GEO_CACHE = {k.upper(): v for k, v in cached_data.items()}
+                return _GEO_CACHE
+    except Exception as e:
+        st.warning(f"Error al cargar caché de geolocalizaciones: {e}")
+    return {}
+
+# Función para guardar caché de geolocalizaciones a archivo
+def _save_geo_cache():
+    """Guarda el caché de geolocalizaciones al archivo"""
+    try:
+        os.makedirs('data', exist_ok=True)
+        with open(GEO_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_GEO_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.warning(f"Error al guardar caché de geolocalizaciones: {e}")
+
+# Cargar caché al inicio
+_GEO_CACHE = _load_geo_cache()
+
+@st.cache_data(ttl=24*3600)
 def _geolocate(pais: str) -> tuple[float, float] | tuple[None, None]:
     """
     Geolocaliza usando el código ISO-2 si ya es válido.
     Si se proporciona el nombre del país en español, lo traduce primero.
+    Usa caché para mejorar el rendimiento.
     """
     if not pais:
         return None, None
-
+    
     clave = pais.strip().upper()
-
+    
+    # Verificar caché primero para evitar cálculos repetidos
+    if clave in _GEO_CACHE:
+        # Convertir a tuple si está almacenado como lista
+        result = _GEO_CACHE[clave]
+        if isinstance(result, list) and len(result) == 2:
+            return tuple(result)
+        return result
+    
     # Si ya es un código ISO de 2 letras
     if len(clave) == 2 and clave.isalpha():
         iso = clave
     else:
         iso = SPANISH_TO_ISO.get(clave)
         if not iso:
+            _GEO_CACHE[clave] = (None, None)
+            _save_geo_cache()  # Guardar en archivo
             return None, None
-
+    
     # Intento con la capital
     info = _COUNTRIES.get(iso)
     capital = info.get('capital') if info else None
@@ -101,10 +155,13 @@ def _geolocate(pais: str) -> tuple[float, float] | tuple[None, None]:
             if (city.get('countrycode','').upper() == iso and
                 city.get('name','').lower() == capital.lower()):
                 try:
-                    return float(city['latitude']), float(city['longitude'])
+                    result = (float(city['latitude']), float(city['longitude']))
+                    _GEO_CACHE[clave] = result
+                    _save_geo_cache()  # Guardar en archivo
+                    return result
                 except:
                     break
-
+    
     # Fallback: centroide del país
     coords = [
         (float(c['latitude']), float(c['longitude']))
@@ -114,9 +171,35 @@ def _geolocate(pais: str) -> tuple[float, float] | tuple[None, None]:
     ]
     if coords:
         lats, lons = zip(*coords)
-        return sum(lats)/len(lats), sum(lons)/len(lons)
-
+        result = (sum(lats)/len(lats), sum(lons)/len(lons))
+        _GEO_CACHE[clave] = result
+        _save_geo_cache()  # Guardar en archivo
+        return result
+    
+    _GEO_CACHE[clave] = (None, None)
+    _save_geo_cache()  # Guardar en archivo
     return None, None
+
+# Función para geolocalizar países de forma masiva y precalcular
+def precalcular_geolocalizaciones(paises):
+    """
+    Geolocaliza una lista de países de forma masiva y guarda los resultados en caché.
+    Útil para precalcular todas las geolocalizaciones necesarias.
+    """
+    resultados = {}
+    for pais in paises:
+        if not pais:
+            continue
+        
+        clave = pais.strip().upper()
+        if clave not in _GEO_CACHE:
+            coords = _geolocate(pais)
+            resultados[clave] = coords
+    
+    # Actualizar la interfaz con el progreso
+    if resultados:
+        st.success(f"Se han precalculado {len(resultados)} geolocalizaciones nuevas.")
+    return resultados
 
 # ─── MÉTRICAS Y TABLA ────────────────────────────────────────────────────────────
 
@@ -1690,4 +1773,3 @@ def plot_paises_mas_afectados(df: pd.DataFrame) -> None:
             )
             fig_line.update_layout(template='plotly_white')
             st.plotly_chart(fig_line, use_container_width=True)
-
